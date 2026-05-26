@@ -5,25 +5,30 @@ import time
 import shutil
 from PIL import Image
 
-# ── CONFIG ────────────────────────────────────────────────────
-ASCII_CHARS = ' `.\':;!|/\\(){}[]?-_+~<>i1lItzJYLCQ0OZmwqpdbkhao*#MW&8%B@$'
-FRAME_WIDTH  = 120
-FRAME_HEIGHT = 38
+ASCII_CHARS = '@#S%?*+;:,. '  # gelap ke terang, simpel tapi kontras
+FRAME_WIDTH  = 80
+FRAME_HEIGHT = 40
 TEMP_DIR     = './ascii_frames_temp'
 FPS          = 10
+VIDEO_INPUT  = 'lv_7536120511777017141_20250810190439.mp4'
 
-# ── ANSI ──────────────────────────────────────────────────────
-RESET = '\x1b[0m'
-BOLD  = '\x1b[1m'
+RESET  = '\x1b[0m'
+BOLD   = '\x1b[1m'
 
-def rgb(r, g, b):
-    return f'\x1b[38;2;{r};{g};{b}m'
+# Warna ANSI 256 — works di semua terminal termasuk Termux
+# Pake color cube 6x6x6 (kode 16-231)
+def ansi256(r, g, b):
+    ri = round(r / 255 * 5)
+    gi = round(g / 255 * 5)
+    bi = round(b / 255 * 5)
+    code = 16 + 36 * ri + 6 * gi + bi
+    return f'\x1b[38;5;{code}m'
 
-def cursor_up(n):
-    return f'\x1b[{n}A'
-
-def clear_line():
-    return '\x1b[2K'
+def blood_red(i, total):
+    t = i / max(total - 1, 1)
+    ri = round((0.4 + t * 0.4) * 5)  # 2 → 4 (merah gelap ke medium)
+    code = 16 + 36 * ri
+    return f'\x1b[38;5;{code}m'
 
 # ── CREDIT PIXEL FONT ─────────────────────────────────────────
 GLYPHS = {
@@ -47,185 +52,164 @@ def build_credit(text):
 
 CREDIT_LINES = build_credit('BY DAFFA')
 
-def blood_red(i, total):
-    t = i / max(total - 1, 1)
-    r = int(120 + t * 80)
-    g = int(t * 10)
-    return rgb(r, g, 0)
+def sleep(ms):
+    time.sleep(ms / 1000)
 
-# ── PRINT CREDIT ──────────────────────────────────────────────
 def print_credit():
     sys.stdout.write('\n' * 50)
     sys.stdout.flush()
     for i, line in enumerate(CREDIT_LINES):
         sys.stdout.write(BOLD + blood_red(i, len(CREDIT_LINES)) + line + RESET + '\n')
         sys.stdout.flush()
-        time.sleep(0.08)
+        sleep(80)
     sys.stdout.write('\n')
     sys.stdout.flush()
-    time.sleep(0.9)
+    sleep(900)
 
-# ── PIXEL → ASCII BERWARNA ────────────────────────────────────
-def pixel_to_colored(r, g, b):
-    lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+# ── PIXEL → ASCII ANSI 256 ────────────────────────────────────
+def pixel_to_ascii(r, g, b):
+    lum = int(0.2126 * r + 0.7152 * g + 0.0722 * b)
     idx = int((lum / 255) * (len(ASCII_CHARS) - 1))
-    return rgb(r, g, b) + ASCII_CHARS[idx]
+    char = ASCII_CHARS[idx]
+    # Double char biar ga terlalu lebar-sempit
+    return ansi256(r, g, b) + char + char
 
-def image_to_ascii_rows(img_path):
-    img = Image.open(img_path).resize((FRAME_WIDTH, FRAME_HEIGHT))
-    img = img.convert('RGB')
-    rows = []
+def image_to_ascii(img_path):
+    img = Image.open(img_path).resize((FRAME_WIDTH, FRAME_HEIGHT)).convert('RGB')
+    lines = []
     for y in range(FRAME_HEIGHT):
         row = ''
         for x in range(FRAME_WIDTH):
             r, g, b = img.getpixel((x, y))
-            row += pixel_to_colored(r, g, b)
+            row += pixel_to_ascii(r, g, b)
         row += RESET
-        rows.append(row)
-    return rows
+        lines.append(row)
+    return lines
 
 # ── EXTRACT FRAMES ────────────────────────────────────────────
 def extract_frames(video_path):
     os.makedirs(TEMP_DIR, exist_ok=True)
-    sys.stdout.write(rgb(255, 180, 0) + '[*] extracting frames...' + RESET + '\n')
+    sys.stdout.write('\x1b[33m[*] extracting frames...\x1b[0m\n')
     sys.stdout.flush()
-
     cmd = [
         'ffmpeg', '-i', video_path,
-        '-vf', f'fps={FPS},scale={FRAME_WIDTH * 6}:{FRAME_HEIGHT * 14}',
+        '-vf', f'fps={FPS},scale={FRAME_WIDTH * 2}:{FRAME_HEIGHT}',
         f'{TEMP_DIR}/frame-%04d.png',
         '-y', '-loglevel', 'quiet'
     ]
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        sys.stdout.write(rgb(255, 50, 50) + '[!] ffmpeg error' + RESET + '\n')
+    r = subprocess.run(cmd)
+    if r.returncode != 0:
+        sys.stdout.write('\x1b[31m[!] ffmpeg error\x1b[0m\n')
         sys.exit(1)
-
-    sys.stdout.write(rgb(0, 220, 80) + '[done] frames extracted' + RESET + '\n')
+    sys.stdout.write('\x1b[32m[done]\x1b[0m\n')
     sys.stdout.flush()
 
 def get_duration(video_path):
-    result = subprocess.run(
+    r = subprocess.run(
         ['ffprobe', '-v', 'quiet', '-print_format', 'compact',
          '-show_entries', 'format=duration', video_path],
         capture_output=True, text=True
     )
-    for line in result.stdout.split('\n'):
+    for line in r.stdout.split('\n'):
         if 'duration' in line:
-            try:
-                return float(line.split('=')[1])
-            except:
-                pass
+            try: return float(line.split('=')[1])
+            except: pass
     return 0
 
-# ── PLAY FRAMES ───────────────────────────────────────────────
-def play_ascii_frames():
-    frames = sorted([
-        f for f in os.listdir(TEMP_DIR) if f.endswith('.png')
-    ])
-
+# ── PLAY ──────────────────────────────────────────────────────
+def play_frames():
+    frames = sorted([f for f in os.listdir(TEMP_DIR) if f.endswith('.png')])
     if not frames:
-        sys.stdout.write(rgb(255, 50, 50) + '[!] tidak ada frame' + RESET + '\n')
+        sys.stdout.write('\x1b[31m[!] tidak ada frame\x1b[0m\n')
         return
 
-    delay = 1 / FPS
     total = len(frames)
-    total_lines = FRAME_HEIGHT + 1  # header + rows
+    delay = 1 / FPS
 
-    # Pre-render semua frame
-    sys.stdout.write(rgb(255, 180, 0) + '[*] pre-rendering...' + RESET + '\n')
+    # Pre-render
+    sys.stdout.write('\x1b[33m[*] pre-rendering...\x1b[0m\n')
     sys.stdout.flush()
     rendered = []
-    for i, fname in enumerate(frames):
-        rendered.append(image_to_ascii_rows(os.path.join(TEMP_DIR, fname)))
-        if i % 10 == 0:
-            sys.stdout.write(f'\r{rgb(80,80,80)}rendering {i+1}/{total}{RESET}')
+    for i, f in enumerate(frames):
+        rendered.append(image_to_ascii(os.path.join(TEMP_DIR, f)))
+        if i % 20 == 0:
+            sys.stdout.write(f'\r\x1b[90mrendering {i+1}/{total}\x1b[0m')
             sys.stdout.flush()
-    sys.stdout.write('\n' + rgb(0, 220, 80) + '[done] siap diputar' + RESET + '\n')
+    sys.stdout.write(f'\n\x1b[32m[done] {total} frames siap\x1b[0m\n')
     sys.stdout.flush()
-    time.sleep(0.5)
+    sleep(500)
 
-    # Frame pertama: print biasa
-    sys.stdout.write(rgb(80, 80, 80) + f'frame 1/{total} | by daffa' + RESET + '\n')
+    TOTAL_LINES = FRAME_HEIGHT + 1
+
+    # Frame pertama
+    sys.stdout.write(f'\x1b[90mframe 1/{total} | by daffa\x1b[0m\n')
     for row in rendered[0]:
         sys.stdout.write(row + '\n')
     sys.stdout.flush()
+    sleep(200)
 
-    time.sleep(0.3)
-
-    # Frame berikutnya: overwrite dengan cursor up
-    for i in range(1, len(rendered)):
-        rows = rendered[i]
-
-        buf = cursor_up(total_lines)
-        buf += '\r' + clear_line() + rgb(80, 80, 80) + f'frame {i+1}/{total} | by daffa' + RESET + '\n'
-        for row in rows:
-            buf += '\r' + clear_line() + row + '\n'
-
+    # Frame berikutnya: overwrite
+    for i in range(1, total):
+        # Naik ke atas
+        buf = f'\x1b[{TOTAL_LINES}A'
+        buf += f'\r\x1b[2K\x1b[90mframe {i+1}/{total} | by daffa\x1b[0m\n'
+        for row in rendered[i]:
+            buf += '\r\x1b[2K' + row + '\n'
         sys.stdout.write(buf)
         sys.stdout.flush()
         time.sleep(delay)
 
     # Credit akhir
-    time.sleep(0.3)
-    sys.stdout.write('\n' + rgb(80, 80, 80) + '-- end --' + RESET + '\n\n')
+    sleep(300)
+    sys.stdout.write('\n\x1b[90m-- end --\x1b[0m\n\n')
     for i, line in enumerate(CREDIT_LINES):
         sys.stdout.write(BOLD + blood_red(i, len(CREDIT_LINES)) + line + RESET + '\n')
     sys.stdout.write('\n')
     sys.stdout.flush()
 
-# ── CLEANUP ───────────────────────────────────────────────────
 def cleanup():
     if os.path.exists(TEMP_DIR):
         shutil.rmtree(TEMP_DIR)
 
-# ── DOWNLOAD VIDEO ────────────────────────────────────────────
 def download_video(url):
-    if shutil.which('yt-dlp') is None:
-        sys.stdout.write(rgb(255, 50, 50) + '[!] install yt-dlp: pip install yt-dlp' + RESET + '\n')
+    if not shutil.which('yt-dlp'):
+        sys.stdout.write('\x1b[31m[!] install yt-dlp: pip install yt-dlp\x1b[0m\n')
         sys.exit(1)
     out = './downloaded_video.mp4'
-    sys.stdout.write(rgb(255, 180, 0) + '[*] downloading...' + RESET + '\n')
+    sys.stdout.write('\x1b[33m[*] downloading...\x1b[0m\n')
     sys.stdout.flush()
-    subprocess.run(
-        ['yt-dlp', '-f', 'best[ext=mp4]/best', '-o', out, url],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    )
-    sys.stdout.write(rgb(0, 220, 80) + '[done]' + RESET + '\n')
+    subprocess.run(['yt-dlp', '-f', 'best[ext=mp4]/best', '-o', out, url],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    sys.stdout.write('\x1b[32m[done]\x1b[0m\n')
     sys.stdout.flush()
     return out
 
-# ── MAIN ──────────────────────────────────────────────────────
 def main():
     print_credit()
 
-    if len(sys.argv) < 2:
-        video_input = 'lv_7536120511777017141_20250810190439.mp4'
-    else:
-        video_input = sys.argv[1]
-    video_path  = video_input
+    video_path = sys.argv[1] if len(sys.argv) >= 2 else VIDEO_INPUT
 
     try:
-        if video_input.startswith('http://') or video_input.startswith('https://'):
-            video_path = download_video(video_input)
+        if video_path.startswith('http://') or video_path.startswith('https://'):
+            video_path = download_video(video_path)
 
         if not os.path.exists(video_path):
-            sys.stdout.write(rgb(255, 50, 50) + f'[!] file tidak ada: {video_path}' + RESET + '\n')
+            sys.stdout.write(f'\x1b[31m[!] file tidak ada: {video_path}\x1b[0m\n')
             sys.exit(1)
 
-        duration = get_duration(video_path)
-        sys.stdout.write(rgb(0, 180, 255) + f'[i] durasi: {round(duration)}s | fps: {FPS}' + RESET + '\n')
+        dur = get_duration(video_path)
+        sys.stdout.write(f'\x1b[96m[i] durasi: {round(dur)}s | fps: {FPS}\x1b[0m\n')
         sys.stdout.flush()
 
         extract_frames(video_path)
-        play_ascii_frames()
+        play_frames()
         cleanup()
 
     except KeyboardInterrupt:
-        sys.stdout.write('\n' + rgb(255, 50, 50) + '[!] dihentikan' + RESET + '\n')
+        sys.stdout.write('\n\x1b[31m[stop]\x1b[0m\n')
         cleanup()
     except Exception as e:
-        sys.stdout.write(rgb(255, 50, 50) + f'[error] {e}' + RESET + '\n')
+        sys.stdout.write(f'\x1b[31m[error] {e}\x1b[0m\n')
         cleanup()
         sys.exit(1)
 
