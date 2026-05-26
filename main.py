@@ -200,10 +200,9 @@ def main():
     print_credit()
 
     if len(sys.argv) < 2:
-        sys.stdout.write('usage:\n  python main.py video.mp4\n  python main.py <url>\n')
-        sys.exit(0)
-
-    video_input = sys.argv[1]
+        video_input = 'lv_7536120511777017141_20250810190439.mp4'
+    else:
+        video_input = sys.argv[1]
     video_path  = video_input
 
     try:
